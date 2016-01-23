@@ -10,15 +10,28 @@
 
 var
   RE_MESSAGE_LINE = /^([^\n\r]*)[\n\r]+([\s\S]*)$/,
+  IPC_RETRY_INTERVAL = 1000,
   options = { // Default Options
     hostModule: 'electron-prebuilt',
     funcGetHostPath: function(moduleExp) { return moduleExp; },
+    ipc: true,
     singleTask: true
   },
-  requests = {}, curRequestId = 0,
+  requests = {}, curRequestId = 0, ipcRequests = {},
   childProc, stdioData = '', stderrData = '', waitingRequests, didInit;
 
-function parseMessage(lines, getLine, cb) { // cb(requestId, message)
+function parseIpcMessage(message, cb) { // cb(requestId, message)
+  var requestId;
+  if (message._requestId != null) { // eslint-disable-line eqeqeq
+    requestId = message._requestId;
+    delete message._requestId;
+    return cb(+requestId, message);
+  } else {
+    throw new Error('Invalid message: ' + JSON.stringify(message));
+  }
+}
+
+function parseMessageLines(lines, getLine, cb) { // cb(requestId, message)
   var matches, line, lineParts;
 
   if (arguments.length < 3) {
@@ -140,12 +153,44 @@ function getHostCmd(cb) { // cb(error, hostPath)
 }
 
 exports.sendRequest = function(message, args, cb) { // cb(error, message)
-  var spawn = require('child_process').spawn; // coz, it might not be used
+  var spawn = require('child_process').spawn;
 
-  function writeMessage(message, cb) {
+  // Recover failed IPC-sending.
+  // In some environment, IPC message does not reach to child, with no error and return value.
+  function sendIpc(message) {
+    if (message) {
+      ipcRequests[message._requestId] = message;
+      childProc.send(message);
+    } else {
+      Object.keys(ipcRequests).forEach(function(requestId) {
+        console.warn('Retry to send IPC message: %d', requestId);
+        childProc.send(ipcRequests[requestId]);
+      });
+    }
+    if (Object.keys(ipcRequests).length) { setTimeout(sendIpc, IPC_RETRY_INTERVAL); }
+  }
+
+  function sendMessage(message, cb) {
     if (options.singleTask) { requests = {}; }
     requests[++curRequestId] = {cb: cb};
-    childProc.stdin.write([curRequestId, JSON.stringify(message)].join('\t') + '\n');
+    if (options.ipc) {
+      message._requestId = curRequestId;
+      sendIpc(message);
+    } else {
+      childProc.stdin.write([curRequestId, JSON.stringify(message)].join('\t') + '\n');
+    }
+  }
+
+  function procResponse(requestId, message) {
+    if (requests[requestId]) {
+      // Check again. (requests that has not curRequestId was already deleted in writeMessage().)
+      if (!options.singleTask || requestId === curRequestId) {
+        requests[requestId].cb(null, message);
+      }
+      delete requests[requestId];
+    } else {
+      console.warn('Unknown or dropped response: %s', requestId);
+    }
   }
 
   if (arguments.length < 3) {
@@ -154,7 +199,7 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
   }
 
   if (childProc) {
-    writeMessage(message, cb);
+    sendMessage(message, cb);
   } else {
     if (waitingRequests) { // Getting host was already started.
       waitingRequests.push({message: message, cb: cb});
@@ -166,44 +211,63 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
     getHostCmd(function(error, hostCmd) {
       if (error) { return cb(error); }
 
-      childProc = spawn(hostCmd, args, {stdio: 'pipe'});
+      childProc = spawn(hostCmd, args, {stdio: options.ipc ? ['ipc', 'pipe', 'pipe'] : 'pipe'});
+
       childProc.on('exit', function(code) {
         console.warn('Child process exited with code: %d', code);
-        if (childProc) { childProc = null; }
+        childProc = null;
       });
 
-      childProc.stdout.setEncoding('utf8');
-      childProc.stdout.on('data', function(chunk) {
-        stdioData = parseMessage(stdioData + chunk, function(requestId, message) {
-          if (requests[requestId]) {
-            // Check again. (requests that has not curRequestId was already deleted in writeMessage().)
-            if (!options.singleTask || requestId === curRequestId) {
-              requests[requestId].cb(null, message);
-            }
-            delete requests[requestId];
-          } else {
-            console.warn('Unknown or dropped response: %s', requestId);
-          }
-        });
-      });
+      childProc.on('error', function(error) { throw error; });
 
       childProc.stderr.setEncoding('utf8');
       childProc.stderr.on('data', function(chunk) {
-        stderrData = parseMessage(stderrData + chunk, true, function(line) {
+        stderrData = parseMessageLines(stderrData + chunk, true, function(line) {
           throw new Error(line);
         });
       });
-
-      childProc.stdin.on('error', function(error) { throw error; });
-      childProc.stdout.on('error', function(error) { throw error; });
       childProc.stderr.on('error', function(error) { throw error; });
+
+      if (options.ipc) {
+
+        childProc.on('message', function(message) {
+          parseIpcMessage(message, function(requestId, message) {
+            if (message._accepted) { // to recover failed IPC-sending
+              delete ipcRequests[requestId];
+              return;
+            }
+            procResponse(requestId, message);
+          });
+        });
+
+        childProc.on('disconnect', function() {
+          console.warn('Child process disconnected');
+          childProc = null;
+        });
+
+      } else {
+
+        childProc.stdout.setEncoding('utf8');
+        childProc.stdout.on('data', function(chunk) {
+          stdioData = parseMessageLines(stdioData + chunk, procResponse);
+        });
+        childProc.stdout.on('error', function(error) { throw error; });
+
+        childProc.stdin.on('error', function(error) { throw error; });
+
+        childProc.on('close', function(code) {
+          console.warn('Child process pipes closed with code: %d', code);
+          childProc = null;
+        });
+
+      }
 
       if (options.singleTask) {
         waitingRequests = waitingRequests[waitingRequests.length - 1];
-        writeMessage(waitingRequests.message, waitingRequests.cb);
+        sendMessage(waitingRequests.message, waitingRequests.cb);
       } else {
         waitingRequests.forEach(function(request) {
-          writeMessage(request.message, request.cb);
+          sendMessage(request.message, request.cb);
         });
       }
       waitingRequests = null;
@@ -213,32 +277,63 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
 
 exports.closeHost = function() {
   if (childProc) {
-    childProc.stdin.end();
+    if (options.ipc) {
+      childProc.disconnect();
+    } else {
+      childProc.stdin.end();
+    }
     childProc = null;
   }
 };
 
-exports.receiveRequest = function(cb) { // cb(message, cbResponse), cbResponse(message)
-  function writeMessage(requestId, message) {
+exports.receiveRequest = function(cbRequest, cbClose) { // cbRequest(message, cbResponse(message))
+  function sendMessage(requestId, message) {
     if (requests[requestId]) {
       // Check again. (requests that has not curRequestId was already deleted in stdin.on('data').)
       if (!options.singleTask || requestId === curRequestId) {
-        console.log([requestId, JSON.stringify(message)].join('\t'));
+        if (options.ipc) {
+          message._requestId = requestId;
+          process.send(message);
+        } else {
+          console.log([requestId, JSON.stringify(message)].join('\t'));
+        }
       }
-      delete requests[requestId];
+      requests[requestId] = false;
     } // else Unknown or dropped request
   }
 
-  process.stdin.resume();
-  process.stdin.setEncoding('utf8');
-  process.stdin.on('data', function(chunk) {
-    stdioData = parseMessage(stdioData + chunk, function(requestId, message) {
-      if (options.singleTask) { requests = {}; }
-      requests[(curRequestId = requestId)] = true;
-      cb(message, function(message) { writeMessage(requestId, message); });
+  function procRequest(requestId, message) {
+    if (requests.hasOwnProperty(requestId)) { return; } // Duplicated request
+    if (options.singleTask) {
+      Object.keys(requests).forEach(function(requestId) { requests[requestId] = false; });
+    }
+    requests[(curRequestId = requestId)] = true;
+    cbRequest(message, function(message) { sendMessage(requestId, message); });
+  }
+
+  if (options.ipc) {
+
+    process.on('message', function(message) {
+      parseIpcMessage(message, function(requestId, message) {
+        process.send({_requestId: requestId, _accepted: true}); // to recover failed IPC-sending
+        procRequest(requestId, message);
+      });
     });
-  });
-  process.stdin.on('error', function(error) { console.error(error); });
+
+    process.on('disconnect', cbClose);
+
+  } else {
+
+    process.stdin.resume();
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', function(chunk) {
+      stdioData = parseMessageLines(stdioData + chunk, procRequest);
+    });
+    process.stdin.on('error', function(error) { console.error(error); });
+
+    process.stdin.on('close', cbClose);
+
+  }
 };
 
 exports.setOptions = function(newOptions) {

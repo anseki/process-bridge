@@ -183,7 +183,7 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
 
   function procResponse(requestId, message) {
     if (requests[requestId]) {
-      // Check again. (requests that has not curRequestId was already deleted in writeMessage().)
+      // Check again. (requests that has not curRequestId was already deleted in sendMessage().)
       if (!options.singleTask || requestId === curRequestId) {
         requests[requestId].cb(null, message);
       }

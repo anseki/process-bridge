@@ -12,7 +12,7 @@ var
   RE_MESSAGE_LINE = /^([^\n\r]*)[\n\r]+([\s\S]*)$/,
   options = { // Default Options
     hostModule: 'electron-prebuilt',
-    funcGetHostPath: function(moduleObj) { return moduleObj; },
+    funcGetHostPath: function(moduleExp) { return moduleExp; },
     singleTask: true
   },
   requests = {}, curRequestId = 0,

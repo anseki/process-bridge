@@ -1,6 +1,6 @@
 {
   "name": "process-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "title": "processBridge",
   "description": "Simple IPC Library",
   "keywords": [

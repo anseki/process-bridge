@@ -17,18 +17,17 @@ var
     ipc: true,
     singleTask: true
   },
-  requests = {}, curRequestId = 0, ipcRequests = {},
+  requests = {}, curRequestId = 0, transferingIpcRequests = {},
   childProc, stdioData = '', stderrData = '', waitingRequests, didInit;
 
 function parseIpcMessage(message, cb) { // cb(requestId, message)
   var requestId;
-  if (message._requestId != null) { // eslint-disable-line eqeqeq
-    requestId = message._requestId;
-    delete message._requestId;
-    return cb(+requestId, message);
-  } else {
+  if (message._requestId == null) { // eslint-disable-line eqeqeq
     throw new Error('Invalid message: ' + JSON.stringify(message));
   }
+  requestId = message._requestId;
+  delete message._requestId;
+  return cb(+requestId, message);
 }
 
 function parseMessageLines(lines, getLine, cb) { // cb(requestId, message)
@@ -43,7 +42,9 @@ function parseMessageLines(lines, getLine, cb) { // cb(requestId, message)
   while ((matches = RE_MESSAGE_LINE.exec(lines))) {
     line = matches[1];
     lines = matches[2];
-    if (getLine) {
+    if (line === '') {
+      continue;
+    } else if (getLine) {
       cb(line); // eslint-disable-line callback-return
     } else {
       lineParts = line.split('\t', 2);
@@ -125,7 +126,7 @@ function getHostCmd(cb) { // cb(error, hostPath)
       // This works as if `module.require.resolve()`
       // targetPath = baseModuleObj.require.resolve(options.hostModule)
       // https://github.com/nodejs/node/blob/master/lib/internal/module.js
-      targetPath = baseModuleObj.constructor._resolveFilename( // eslint-disable-line no-underscore-dangle
+      targetPath = baseModuleObj.constructor._resolveFilename(
         options.hostModule, baseModuleObj);
       if (!targetPath) { throw new Error('Cannot get module path'); }
 
@@ -159,15 +160,15 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
   // In some environment, IPC message does not reach to child, with no error and return value.
   function sendIpc(message) {
     if (message) {
-      ipcRequests[message._requestId] = message;
+      transferingIpcRequests[message._requestId] = message;
       childProc.send(message);
     } else {
-      Object.keys(ipcRequests).forEach(function(requestId) {
+      Object.keys(transferingIpcRequests).forEach(function(requestId) {
         console.warn('Retry to send IPC message: %d', requestId);
-        childProc.send(ipcRequests[requestId]);
+        childProc.send(transferingIpcRequests[requestId]);
       });
     }
-    if (Object.keys(ipcRequests).length) { setTimeout(sendIpc, IPC_RETRY_INTERVAL); }
+    if (Object.keys(transferingIpcRequests).length) { setTimeout(sendIpc, IPC_RETRY_INTERVAL); }
   }
 
   function sendMessage(message, cb) {
@@ -233,7 +234,7 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
         childProc.on('message', function(message) {
           parseIpcMessage(message, function(requestId, message) {
             if (message._accepted) { // to recover failed IPC-sending
-              delete ipcRequests[requestId];
+              delete transferingIpcRequests[requestId];
               return;
             }
             procResponse(requestId, message);

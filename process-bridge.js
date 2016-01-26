@@ -164,7 +164,7 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
     if (message) { transferingRequests[message._requestId] = message; }
     if ((requestIds = Object.keys(transferingRequests)).length) {
       requestIds.forEach(function(requestId) {
-        console.warn('Retry to send IPC message: %d', requestId);
+        console.warn('Try to send IPC message: %d', requestId);
         childProc.send(transferingRequests[requestId]);
       });
       retryTimer = setTimeout(sendIpc, IPC_RETRY_INTERVAL);

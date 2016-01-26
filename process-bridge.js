@@ -23,6 +23,7 @@ var
 function parseIpcMessage(message, cb) { // cb(requestId, message)
   var requestId;
   if (message._requestId == null) { // eslint-disable-line eqeqeq
+    clearTimeout(retryTimer);
     throw new Error('Invalid message: ' + JSON.stringify(message));
   }
   requestId = message._requestId;
@@ -218,20 +219,35 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
 
       childProc = spawn(hostCmd, args, {stdio: options.ipc ? ['ipc', 'pipe', 'pipe'] : 'pipe'});
 
-      childProc.on('exit', function(code) {
+      childProc.on('exit', function(code, signal) {
+        var error;
         console.warn('Child process exited with code: %d', code);
         childProc = null;
+        if (code !== 0) {
+          clearTimeout(retryTimer);
+          error = new Error('Child process exited with code: ' + code);
+          error.code = code;
+          error.signal = signal;
+          throw error;
+        }
       });
 
-      childProc.on('error', function(error) { throw error; });
+      childProc.on('error', function(error) {
+        clearTimeout(retryTimer);
+        throw error;
+      });
 
       childProc.stderr.setEncoding('utf8');
       childProc.stderr.on('data', function(chunk) {
+        clearTimeout(retryTimer);
         stderrData = parseMessageLines(stderrData + chunk, true, function(line) {
           throw new Error(line);
         });
       });
-      childProc.stderr.on('error', function(error) { throw error; });
+      childProc.stderr.on('error', function(error) {
+        clearTimeout(retryTimer);
+        throw error;
+      });
 
       if (options.ipc) {
 

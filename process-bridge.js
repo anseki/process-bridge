@@ -17,7 +17,7 @@ var
     ipc: true,
     singleTask: true
   },
-  requests = {}, curRequestId = 0, transferingIpcRequests = {},
+  requests = {}, curRequestId = 0, transferingRequests = {}, retryTimer,
   childProc, stdioData = '', stderrData = '', waitingRequests, didInit;
 
 function parseIpcMessage(message, cb) { // cb(requestId, message)
@@ -159,16 +159,16 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
   // Recover failed IPC-sending.
   // In some environment, IPC message does not reach to child, with no error and return value.
   function sendIpc(message) {
-    if (message) {
-      transferingIpcRequests[message._requestId] = message;
-      childProc.send(message);
-    } else {
-      Object.keys(transferingIpcRequests).forEach(function(requestId) {
+    var requestIds;
+    clearTimeout(retryTimer);
+    if (message) { transferingRequests[message._requestId] = message; }
+    if ((requestIds = Object.keys(transferingRequests)).length) {
+      requestIds.forEach(function(requestId) {
         console.warn('Retry to send IPC message: %d', requestId);
-        childProc.send(transferingIpcRequests[requestId]);
+        childProc.send(transferingRequests[requestId]);
       });
+      retryTimer = setTimeout(sendIpc, IPC_RETRY_INTERVAL);
     }
-    if (Object.keys(transferingIpcRequests).length) { setTimeout(sendIpc, IPC_RETRY_INTERVAL); }
   }
 
   function sendMessage(message, cb) {
@@ -203,7 +203,11 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
     sendMessage(message, cb);
   } else {
     if (waitingRequests) { // Getting host was already started.
-      waitingRequests.push({message: message, cb: cb});
+      if (options.singleTask) {
+        waitingRequests = [{message: message, cb: cb}];
+      } else {
+        waitingRequests.push({message: message, cb: cb});
+      }
       return;
     }
     waitingRequests = [{message: message, cb: cb}];
@@ -234,7 +238,7 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
         childProc.on('message', function(message) {
           parseIpcMessage(message, function(requestId, message) {
             if (message._accepted) { // to recover failed IPC-sending
-              delete transferingIpcRequests[requestId];
+              delete transferingRequests[requestId];
               return;
             }
             procResponse(requestId, message);
@@ -263,14 +267,7 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
 
       }
 
-      if (options.singleTask) {
-        waitingRequests = waitingRequests[waitingRequests.length - 1];
-        sendMessage(waitingRequests.message, waitingRequests.cb);
-      } else {
-        waitingRequests.forEach(function(request) {
-          sendMessage(request.message, request.cb);
-        });
-      }
+      waitingRequests.forEach(function(request) { sendMessage(request.message, request.cb); });
       waitingRequests = null;
     });
   }
@@ -300,7 +297,7 @@ exports.receiveRequest = function(cbRequest, cbClose) { // cbRequest(message, cb
         }
       }
       requests[requestId] = false;
-    } // else Unknown or dropped request
+    } // else: Unknown or dropped request
   }
 
   function procRequest(requestId, message) {

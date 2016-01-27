@@ -17,13 +17,12 @@ var
     ipc: true,
     singleTask: true
   },
-  requests = {}, curRequestId = 0, transferingRequests = {}, retryTimer,
+  requests = {}, curRequestId = 0, tranRequests = {}, retryTimer,
   childProc, stdioData = '', stderrData = '', waitingRequests, didInit;
 
 function parseIpcMessage(message, cb) { // cb(requestId, message)
   var requestId;
   if (message._requestId == null) { // eslint-disable-line eqeqeq
-    clearTimeout(retryTimer);
     throw new Error('Invalid message: ' + JSON.stringify(message));
   }
   requestId = message._requestId;
@@ -162,17 +161,19 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
   function sendIpc(message) {
     var requestIds;
     clearTimeout(retryTimer);
-    if (message) { transferingRequests[message._requestId] = message; }
-    if ((requestIds = Object.keys(transferingRequests)).length) {
+    if (!childProc) { throw new Error('Child process already exited.'); }
+    if (message) { tranRequests[message._requestId] = message; }
+    if ((requestIds = Object.keys(tranRequests)).length) {
       requestIds.forEach(function(requestId) {
         console.warn('Try to send IPC message: %d', requestId);
-        childProc.send(transferingRequests[requestId]);
+        childProc.send(tranRequests[requestId]);
       });
       retryTimer = setTimeout(sendIpc, IPC_RETRY_INTERVAL);
     }
   }
 
   function sendMessage(message, cb) {
+    if (!childProc) { throw new Error('Child process already exited.'); }
     if (options.singleTask) { requests = {}; }
     requests[++curRequestId] = {cb: cb};
     if (options.ipc) {
@@ -224,7 +225,6 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
         console.warn('Child process exited with code: %d', code);
         childProc = null;
         if (code !== 0) {
-          clearTimeout(retryTimer);
           error = new Error('Child process exited with code: ' + code);
           error.code = code;
           error.signal = signal;
@@ -232,29 +232,21 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
         }
       });
 
-      childProc.on('error', function(error) {
-        clearTimeout(retryTimer);
-        throw error;
-      });
+      childProc.on('error', function(error) { throw error; });
 
       childProc.stderr.setEncoding('utf8');
       childProc.stderr.on('data', function(chunk) {
-        clearTimeout(retryTimer);
-        stderrData = parseMessageLines(stderrData + chunk, true, function(line) {
-          throw new Error(line);
-        });
+        stderrData = parseMessageLines(stderrData + chunk, true,
+          function(line) { throw new Error(line); });
       });
-      childProc.stderr.on('error', function(error) {
-        clearTimeout(retryTimer);
-        throw error;
-      });
+      childProc.stderr.on('error', function(error) { throw error; });
 
       if (options.ipc) {
 
         childProc.on('message', function(message) {
           parseIpcMessage(message, function(requestId, message) {
             if (message._accepted) { // to recover failed IPC-sending
-              delete transferingRequests[requestId];
+              delete tranRequests[requestId];
               return;
             }
             procResponse(requestId, message);
@@ -301,7 +293,10 @@ exports.closeHost = function() {
 };
 
 exports.receiveRequest = function(cbRequest, cbClose) { // cbRequest(message, cbResponse(message))
+  var closed;
+
   function sendMessage(requestId, message) {
+    if (closed) { throw new Error('Connection already disconnected.'); }
     if (requests[requestId]) {
       // Check again. (requests that has not curRequestId was already deleted in stdin.on('data').)
       if (!options.singleTask || requestId === curRequestId) {
@@ -334,7 +329,10 @@ exports.receiveRequest = function(cbRequest, cbClose) { // cbRequest(message, cb
       });
     });
 
-    process.on('disconnect', cbClose);
+    process.on('disconnect', function() {
+      closed = true;
+      cbClose();
+    });
 
   } else {
 
@@ -345,7 +343,10 @@ exports.receiveRequest = function(cbRequest, cbClose) { // cbRequest(message, cb
     });
     process.stdin.on('error', function(error) { console.error(error); });
 
-    process.stdin.on('close', cbClose);
+    process.stdin.on('close', function() {
+      closed = true;
+      cbClose();
+    });
 
   }
 };

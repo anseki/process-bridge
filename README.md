@@ -1,15 +1,15 @@
 # processBridge
 
-Simple IPC Library
+Simple IPC Wrapper
 
 *It is not documented yet.*
 
 ## Methods
 
-### `sendRequest`
+### `sendRequest(message, args, cb)`
 
-### `closeHost`
+### `closeHost()`
 
-### `receiveRequest`
+### `receiveRequest(cbRequest, cbClose)`
 
-### `setOptions`
+### `setOptions(newOptions)`

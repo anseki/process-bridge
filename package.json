@@ -1,8 +1,8 @@
 {
   "name": "process-bridge",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "title": "processBridge",
-  "description": "Simple IPC Library",
+  "description": "Simple IPC Wrapper",
   "keywords": [
   ],
   "main": "./process-bridge.js",

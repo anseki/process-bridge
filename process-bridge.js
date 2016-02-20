@@ -90,9 +90,28 @@ function getHostCmd(cb) { // cb(error, hostPath)
         'npm'));
     }
 
-    console.warn('Base directory path: %s', baseDir);
-    npm.load({prefix: baseDir}, function(error) {
+    console.info('Base directory path: %s', baseDir);
+    npm.load({prefix: baseDir, loglevel: 'silent', spin: false, progress: false}, function(error) {
+      var npmSpawn, npmSpawnPath;
       if (error) { throw error; }
+
+      // Wrap `spawn.js` and drop output from child.
+      npmSpawnPath = require.resolve(
+        pathUtil.join(pathUtil.dirname(require.resolve('npm')), 'utils/spawn.js'));
+      try {
+        require(npmSpawnPath);
+      } catch (error) {
+        throw error.code === 'MODULE_NOT_FOUND' ?
+          new Error('Unknown version of npm') : error;
+      }
+      npmSpawn = require.cache[npmSpawnPath].exports;
+      if (typeof npmSpawn !== 'function') { throw new Error('Unknown version of npm or spawn.js'); }
+      require.cache[npmSpawnPath].exports = function(cmd, args, options) {
+        console.warn('Spawn in silent-mode: %s %s', cmd, args.join(' '));
+        options.stdio = 'ignore';
+        return npmSpawn(cmd, args, options);
+      };
+
       npm.commands.install(versionRange ? [] : [options.hostModule], function(error) {
         if (error) { throw error; }
         cb();
@@ -165,7 +184,7 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
     if (message) { tranRequests[message._requestId] = message; }
     if ((requestIds = Object.keys(tranRequests)).length) {
       requestIds.forEach(function(requestId) {
-        console.warn('Try to send IPC message: %d', requestId);
+        console.info('Try to send IPC message: %d', +requestId);
         childProc.send(tranRequests[requestId]);
       });
       retryTimer = setTimeout(sendIpc, IPC_RETRY_INTERVAL);
@@ -192,7 +211,7 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
       }
       delete requests[requestId];
     } else {
-      console.warn('Unknown or dropped response: %s', requestId);
+      console.warn('Unknown or dropped response: %d', +requestId);
     }
   }
 
@@ -214,7 +233,7 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
     }
     waitingRequests = [{message: message, cb: cb}];
 
-    console.warn('Start child process...');
+    console.info('Start child process...');
     getHostCmd(function(error, hostCmd) {
       if (error) { return cb(error); }
 
@@ -222,7 +241,7 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
 
       childProc.on('exit', function(code, signal) {
         var error;
-        console.warn('Child process exited with code: %d', code);
+        console.info('Child process exited with code: %s', code);
         childProc = null;
         if (code !== 0) {
           error = new Error('Child process exited with code: ' + code);
@@ -254,7 +273,7 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
         });
 
         childProc.on('disconnect', function() {
-          console.warn('Child process disconnected');
+          console.info('Child process disconnected');
           childProc = null;
         });
 
@@ -269,7 +288,7 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
         childProc.stdin.on('error', function(error) { throw error; });
 
         childProc.on('close', function(code) {
-          console.warn('Child process pipes closed with code: %d', code);
+          console.info('Child process pipes closed with code: %s', code);
           childProc = null;
         });
 

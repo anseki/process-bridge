@@ -6,7 +6,7 @@ Simple IPC Wrapper
 
 ## Methods
 
-### `sendRequest(message, args, cb)`
+### `sendRequest(message, args, cb, cbInitDone)`
 
 ### `closeHost()`
 

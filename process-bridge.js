@@ -57,7 +57,7 @@ function parseMessageLines(lines, getLine, cb) { // cb(requestId, message)
   return lines;
 }
 
-function getHostCmd(cb) { // cb(error, hostPath)
+function getHostCmd(cb, cbInitDone) { // cb(error, hostPath)
   var pathUtil = require('path'), semver = require('semver'),
     version, versionRange, error, hostCmd,
     baseModuleObj = module.parent, targetModuleExp,
@@ -136,7 +136,10 @@ function getHostCmd(cb) { // cb(error, hostPath)
     } catch (error) {
       if (error.code === 'MODULE_NOT_FOUND') {
         error.isRetried = true;
-        initModule(function() { getHostCmd(cb); }); // Retry
+        initModule(function() {
+          if (cbInitDone) { cbInitDone(); }
+          getHostCmd(cb); // Retry
+        });
       }
       return cb(error);
     }
@@ -159,7 +162,10 @@ function getHostCmd(cb) { // cb(error, hostPath)
             error.isRetried = true;
             delete require.cache[targetPath]; // Unload forcibly
             delete require.cache[require.resolve(targetPackagePath)]; // Remove cached targetPackageInfo
-            initModule(function() { getHostCmd(cb); }); // Retry
+            initModule(function() {
+              if (cbInitDone) { cbInitDone(); }
+              getHostCmd(cb); // Retry
+            });
             return cb(error);
           }
         }
@@ -172,7 +178,7 @@ function getHostCmd(cb) { // cb(error, hostPath)
       cb(null, hostCmd) : cb(new Error('Couldn\'t get command.'));
 }
 
-exports.sendRequest = function(message, args, cb) { // cb(error, message)
+exports.sendRequest = function(message, args, cb, cbInitDone) { // cb(error, message)
   var spawn = require('child_process').spawn;
 
   // Recover failed IPC-sending.
@@ -296,7 +302,7 @@ exports.sendRequest = function(message, args, cb) { // cb(error, message)
 
       waitingRequests.forEach(function(request) { sendMessage(request.message, request.cb); });
       waitingRequests = null;
-    });
+    }, cbInitDone);
   }
 };
 

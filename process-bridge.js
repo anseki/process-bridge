@@ -20,6 +20,12 @@ var
   requests = {}, curRequestId = 0, tranRequests = {}, retryTimer,
   childProc, stdioData = '', stderrData = '', waitingRequests, didInit;
 
+/**
+ * Normalize an IPC message, and call the function with `requestId`.
+ * @param {Object} message - IPC message.
+ * @param {Object} cb - Callback function that is called with `requestId`, `message`.
+ * @returns {*} result - Something that was returned by `cb`.
+ */
 function parseIpcMessage(message, cb) { // cb(requestId, message)
   var requestId;
   if (message._requestId == null) { // eslint-disable-line eqeqeq
@@ -178,7 +184,15 @@ function getHostCmd(cb, cbInitDone) { // cb(error, hostPath)
       cb(null, hostCmd) : cb(new Error('Couldn\'t get command.'));
 }
 
-exports.sendRequest = function(message, args, cb, cbInitDone) { // cb(error, message)
+/* eslint valid-jsdoc: [2, {"requireReturn": false}] */
+/**
+ * @param {Object} message - Message that is sent.
+ * @param {Array<string>} args - Arguments that are passed to host command.
+ * @param {Object} cbResponse - Callback function that is called when host returned response.
+ * @param {Object} cbInitDone - Callback function that is called when target module was initialized if it is done.
+ */
+/* eslint valid-jsdoc: [2, { prefer: { "return": "returns"}}] */
+exports.sendRequest = function(message, args, cbResponse, cbInitDone) { // cb(error, message)
   var spawn = require('child_process').spawn;
 
   // Recover failed IPC-sending.
@@ -222,26 +236,26 @@ exports.sendRequest = function(message, args, cb, cbInitDone) { // cb(error, mes
   }
 
   if (arguments.length < 3) {
-    cb = args;
+    cbResponse = args;
     args = [];
   }
 
   if (childProc) {
-    sendMessage(message, cb);
+    sendMessage(message, cbResponse);
   } else {
     if (waitingRequests) { // Getting host was already started.
       if (options.singleTask) {
-        waitingRequests = [{message: message, cb: cb}];
+        waitingRequests = [{message: message, cb: cbResponse}];
       } else {
-        waitingRequests.push({message: message, cb: cb});
+        waitingRequests.push({message: message, cb: cbResponse});
       }
       return;
     }
-    waitingRequests = [{message: message, cb: cb}];
+    waitingRequests = [{message: message, cb: cbResponse}];
 
     console.info('Start child process...');
     getHostCmd(function(error, hostCmd) {
-      if (error) { return cb(error); }
+      if (error) { return cbResponse(error); }
 
       childProc = spawn(hostCmd, args, {stdio: options.ipc ? ['ipc', 'pipe', 'pipe'] : 'pipe'});
 
@@ -317,6 +331,12 @@ exports.closeHost = function() {
   }
 };
 
+/* eslint valid-jsdoc: [2, {"requireReturn": false}] */
+/**
+ * @param {Object} cbRequest - Callback function that is called when received request.
+ * @param {Object} cbInitDone - Callback function that is called when host is closed by main.
+ */
+/* eslint valid-jsdoc: [2, { prefer: { "return": "returns"}}] */
 exports.receiveRequest = function(cbRequest, cbClose) { // cbRequest(message, cbResponse(message))
   var closed;
 

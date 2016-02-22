@@ -97,7 +97,9 @@ function getHostCmd(cb, cbInitDone) { // cb(error, hostPath)
     }
 
     console.info('Base directory path: %s', baseDir);
-    npm.load({prefix: baseDir, loglevel: 'silent', spin: false, progress: false}, function(error) {
+    npm.load({prefix: baseDir,
+        npat: false, dev: false, production: true, // disable `devDependencies`
+        loglevel: 'silent', spin: false, progress: false}, function(error) {
       var npmSpawn, npmSpawnPath;
       if (error) { throw error; }
 

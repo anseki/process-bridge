@@ -23,7 +23,7 @@ var
 /**
  * Normalize an IPC message, and call the function with `requestId`.
  * @param {Object} message - IPC message.
- * @param {Object} cb - Callback function that is called with `requestId`, `message`.
+ * @param {function} cb - Callback function that is called with `requestId`, `message`.
  * @returns {*} result - Something that was returned by `cb`.
  */
 function parseIpcMessage(message, cb) { // cb(requestId, message)
@@ -188,8 +188,8 @@ function getHostCmd(cb, cbInitDone) { // cb(error, hostPath)
 /**
  * @param {Object} message - Message that is sent.
  * @param {Array<string>} args - Arguments that are passed to host command.
- * @param {Object} cbResponse - Callback function that is called when host returned response.
- * @param {Object} cbInitDone - Callback function that is called when target module was initialized if it is done.
+ * @param {function} cbResponse - Callback function that is called when host returned response.
+ * @param {function} [cbInitDone] - Callback function that is called when target module was initialized if it is done.
  */
 /* eslint valid-jsdoc: [2, { prefer: { "return": "returns"}}] */
 exports.sendRequest = function(message, args, cbResponse, cbInitDone) { // cb(error, message)
@@ -200,9 +200,9 @@ exports.sendRequest = function(message, args, cbResponse, cbInitDone) { // cb(er
   function sendIpc(message) {
     var requestIds;
     clearTimeout(retryTimer);
-    if (!childProc) { throw new Error('Child process already exited.'); }
     if (message) { tranRequests[message._requestId] = message; }
     if ((requestIds = Object.keys(tranRequests)).length) {
+      if (!childProc) { throw new Error('Child process already exited.'); }
       requestIds.forEach(function(requestId) {
         console.info('Try to send IPC message: %d', +requestId);
         childProc.send(tranRequests[requestId]);
@@ -320,21 +320,32 @@ exports.sendRequest = function(message, args, cbResponse, cbInitDone) { // cb(er
   }
 };
 
-exports.closeHost = function() {
+/* eslint valid-jsdoc: [2, {"requireReturn": false}] */
+/**
+ * @param {boolean} force - Disconnect immediately.
+ */
+/* eslint valid-jsdoc: [2, { prefer: { "return": "returns"}}] */
+exports.closeHost = function(force) {
   if (childProc) {
-    if (options.ipc) {
-      childProc.disconnect();
+    if (force) {
+      if (options.ipc) {
+        childProc.disconnect();
+      } else {
+        childProc.stdin.end();
+      }
+      childProc = null;
     } else {
-      childProc.stdin.end();
+      requests = {}; // Ignore all response.
+      tranRequests = {}; // Cancel all requests.
+      exports.sendRequest({_close: true}, [], function() {});
     }
-    childProc = null;
   }
 };
 
 /* eslint valid-jsdoc: [2, {"requireReturn": false}] */
 /**
- * @param {Object} cbRequest - Callback function that is called when received request.
- * @param {Object} cbInitDone - Callback function that is called when host is closed by main.
+ * @param {function} cbRequest - Callback function that is called when received request.
+ * @param {function} cbClose - Callback function that is called when host is closed by main.
  */
 /* eslint valid-jsdoc: [2, { prefer: { "return": "returns"}}] */
 exports.receiveRequest = function(cbRequest, cbClose) { // cbRequest(message, cbResponse(message))
@@ -357,6 +368,16 @@ exports.receiveRequest = function(cbRequest, cbClose) { // cbRequest(message, cb
   }
 
   function procRequest(requestId, message) {
+    if (message._close) {
+      closed = true; // Avoid doing sendMessage() even if cbClose() failed.
+      if (cbClose) {
+        cbClose();
+        cbClose = null;
+      } else {
+        throw new Error('Process is exited forcedly.');
+      }
+      return;
+    }
     if (requests.hasOwnProperty(requestId)) { return; } // Duplicated request
     if (options.singleTask) {
       Object.keys(requests).forEach(function(requestId) { requests[requestId] = false; });
@@ -376,7 +397,10 @@ exports.receiveRequest = function(cbRequest, cbClose) { // cbRequest(message, cb
 
     process.on('disconnect', function() {
       closed = true;
-      cbClose();
+      if (cbClose) {
+        cbClose();
+        cbClose = null;
+      }
     });
 
   } else {
@@ -390,7 +414,10 @@ exports.receiveRequest = function(cbRequest, cbClose) { // cbRequest(message, cb
 
     process.stdin.on('close', function() {
       closed = true;
-      cbClose();
+      if (cbClose) {
+        cbClose();
+        cbClose = null;
+      }
     });
 
   }

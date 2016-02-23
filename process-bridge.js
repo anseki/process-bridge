@@ -84,29 +84,36 @@ function getHostCmd(cb, cbInitDone) { // cb(error, hostPath)
   }
 
   function initModule(cb) {
-    var npm;
+    var npm, npmPath;
     if (didInit) { throw new Error('Cannot initialize module \'' + options.hostModule + '\''); }
     didInit = true;
+
     try {
       npm = require('npm');
     } catch (error) {
       if (error.code !== 'MODULE_NOT_FOUND') { throw error; }
-      npm = require(pathUtil.join( // Retry with full path
-        require('child_process').execSync('npm root -g', {encoding: 'utf8'}).replace(/\n+$/, ''),
-        'npm'));
+      // Retry with full path
+      npm = require(
+        (npmPath = pathUtil.join(
+          require('child_process').execSync('npm root -g', {encoding: 'utf8'}).replace(/\n+$/, ''),
+          'npm'))
+        );
     }
 
     console.info('Base directory path: %s', baseDir);
     npm.load({prefix: baseDir,
-        npat: false, dev: false, production: true, // disable `devDependencies`
-        loglevel: 'silent', spin: false, progress: false}, function(error) {
+          npat: false, dev: false, production: true, // disable `devDependencies`
+          loglevel: 'silent', spin: false, progress: false // disable progress indicator
+        }, function(error) {
       var npmSpawn, npmSpawnPath;
       if (error) { throw error; }
 
-      // Wrap `spawn.js` and drop output from child.
-      npmSpawnPath = require.resolve(
-        pathUtil.join(pathUtil.dirname(require.resolve('npm')), 'utils/spawn.js'));
+      // Wrap `spawn.js` for dropping output from child.
       try {
+        npmSpawnPath = require.resolve(
+          pathUtil.join(
+            npmPath || pathUtil.dirname(require.resolve('npm')), // npmPath is dir
+            'utils/spawn.js'));
         require(npmSpawnPath);
       } catch (error) {
         throw error.code === 'MODULE_NOT_FOUND' ?

@@ -112,7 +112,7 @@ function getHostCmd(cb, cbInitDone) { // cb(error, hostPath)
       try {
         npmSpawnPath = require.resolve(
           pathUtil.join(
-            npmPath || pathUtil.dirname(require.resolve('npm')), // npmPath is dir
+            pathUtil.dirname(require.resolve(npmPath || 'npm')), // npmPath is package dir
             'utils/spawn.js'));
         require(npmSpawnPath);
       } catch (error) {

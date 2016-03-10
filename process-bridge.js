@@ -13,18 +13,19 @@ var
   IPC_RETRY_INTERVAL = 1000,
   options = { // Default Options
     hostModule: 'electron-prebuilt',
-    funcGetHostPath: function(moduleExp) { return moduleExp; },
+    funcGetHostPath: function(moduleExports) { return moduleExports; },
+    dependenciesSatisfy: true,
     ipc: true,
     singleTask: true
   },
   requests = {}, curRequestId = 0, tranRequests = {}, retryTimer,
-  childProc, stdioData = '', stderrData = '', waitingRequests, didInit;
+  childProc, stdioData = '', stderrData = '', waitingRequests, triedInit;
 
 /**
  * Normalize an IPC message, and call the function with `requestId`.
  * @param {Object} message - IPC message.
- * @param {function} cb - Callback function that is called with `requestId`, `message`.
- * @returns {*} result - Something that was returned by `cb`.
+ * @param {Function} cb - Callback function that is called with `requestId`, `message`.
+ * @returns {any} result - Something that was returned by `cb`.
  */
 function parseIpcMessage(message, cb) { // cb(requestId, message)
   var requestId;
@@ -63,15 +64,21 @@ function parseMessageLines(lines, getLine, cb) { // cb(requestId, message)
   return lines;
 }
 
-function getHostCmd(cb, cbInitDone) { // cb(error, hostPath)
+/**
+ * @param {Function} cbReceiveHostCmd - Callback function that is called with host command.
+ * @param {Function} cbInitDone - Callback function that is called when module was initialized.
+ * @returns {any} result - Something that was returned by `cbReceiveHostCmd`.
+ */
+function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, hostPath)
   var pathUtil = require('path'), semver = require('semver'),
-    version, versionRange, error, hostCmd,
-    baseModuleObj = module.parent, targetModuleExp,
-    basePackageRoot, targetPackageRoot, basePackageInfo, targetPackageInfo,
-    baseDir = pathUtil.dirname(baseModuleObj.filename), targetPath, targetPackagePath;
+    baseModuleObj = module.parent,
+    baseDir = pathUtil.dirname(baseModuleObj.filename),
+    basePackageRoot, basePackageInfo, error,
+    hostVersionRange, hostModuleExports, hostCmd;
 
   function getPackageRoot(startPath) {
-    var fs = require('fs'), dirPath = pathUtil.resolve(startPath || ''), parentPath;
+    var fs = require('fs'),
+      dirPath = pathUtil.resolve(startPath || ''), parentPath;
     while (true) {
       try {
         fs.accessSync(pathUtil.join(dirPath, 'package.json')); // Check only existence.
@@ -81,18 +88,20 @@ function getHostCmd(cb, cbInitDone) { // cb(error, hostPath)
       if (parentPath === dirPath) { break; } // root
       dirPath = parentPath;
     }
+    return null;
   }
 
   function initModule(cb) {
     var npm, npmPath;
-    if (didInit) { throw new Error('Cannot initialize module \'' + options.hostModule + '\''); }
-    didInit = true;
+    if (triedInit) { throw new Error('Cannot initialize module'); }
+    triedInit = true;
 
     try {
       npm = require('npm');
     } catch (error) {
       if (error.code !== 'MODULE_NOT_FOUND') { throw error; }
       // Retry with full path
+      console.warn('Try to get npm in global directory.');
       npm = require(
         (npmPath = pathUtil.join(
           require('child_process').execSync('npm root -g', {encoding: 'utf8'}).replace(/\n+$/, ''),
@@ -102,9 +111,9 @@ function getHostCmd(cb, cbInitDone) { // cb(error, hostPath)
 
     console.info('Base directory path: %s', baseDir);
     npm.load({prefix: baseDir,
-          npat: false, dev: false, production: true, // disable `devDependencies`
-          loglevel: 'silent', spin: false, progress: false // disable progress indicator
-        }, function(error) {
+      npat: false, dev: false, production: true, // disable `devDependencies`
+      loglevel: 'silent', spin: false, progress: false // disable progress indicator
+    }, function(error) {
       var npmSpawn, npmSpawnPath;
       if (error) { throw error; }
 
@@ -127,7 +136,8 @@ function getHostCmd(cb, cbInitDone) { // cb(error, hostPath)
         return npmSpawn(cmd, args, options);
       };
 
-      npm.commands.install(versionRange ? [] : [options.hostModule], function(error) {
+      // `hostVersionRange` means that `options.hostModule` and version are specified in `package.json`.
+      npm.commands.install(hostVersionRange ? [] : [options.hostModule], function(error) {
         if (error) { throw error; }
         cb();
       });
@@ -135,72 +145,106 @@ function getHostCmd(cb, cbInitDone) { // cb(error, hostPath)
     });
   }
 
+  function isSatisfiedModule(moduleName, versionRange) {
+    var modulePath, packageRoot, packagePath, packageInfo, satisfied = false;
+
+    console.info('Check version of: %s', moduleName);
+    try {
+      // modulePath = baseModuleObj.require.resolve(moduleName)
+      // This works as if `module.require.resolve()`
+      // https://github.com/nodejs/node/blob/master/lib/internal/module.js
+      modulePath = baseModuleObj.constructor._resolveFilename(moduleName, baseModuleObj);
+    } catch (error) {
+      if (error.code !== 'MODULE_NOT_FOUND') { throw error; }
+      return false;
+    }
+
+    if (!(packageRoot = getPackageRoot(pathUtil.dirname(modulePath)))) {
+      throw new Error('Cannot find module \'' + moduleName + '\' path');
+    }
+    packageInfo = require( // `resolve` to make sure
+      (packagePath = require.resolve(pathUtil.join(packageRoot, 'package.json'))));
+
+    if (!semver.valid(packageInfo.version)) {
+      throw new Error('Invalid \'' + moduleName + '\' version: ' + packageInfo.version);
+    }
+    satisfied = semver.satisfies(packageInfo.version, versionRange);
+
+    delete require.cache[modulePath]; // Unload forcibly
+    delete require.cache[packagePath]; // Remove cached targetPackageInfo
+    baseModuleObj.constructor._pathCache = {}; // Remove cached pathes
+    return satisfied;
+  }
+
+  if ((basePackageRoot = getPackageRoot(baseDir))) {
+    baseDir = basePackageRoot;
+    basePackageInfo = require(pathUtil.join(basePackageRoot, 'package'));
+  }
+
   if (options.hostModule) {
-    if ((basePackageRoot = getPackageRoot(baseDir))) {
-      baseDir = basePackageRoot;
-      basePackageInfo = require(pathUtil.join(basePackageRoot, 'package'));
-      if (basePackageInfo.dependencies &&
-          (versionRange = basePackageInfo.dependencies[options.hostModule]) &&
-          !semver.validRange(versionRange)) {
-        throw new TypeError('Invalid SemVer Range: ' + versionRange);
-      }
+    if (basePackageInfo && basePackageInfo.dependencies &&
+        (hostVersionRange = basePackageInfo.dependencies[options.hostModule]) &&
+        !semver.validRange(hostVersionRange)) {
+      throw new Error('Invalid SemVer Range: ' + hostVersionRange);
     }
 
     try {
-      targetModuleExp = baseModuleObj.require(options.hostModule);
+      hostModuleExports = baseModuleObj.require(options.hostModule);
+      if (hostVersionRange && !isSatisfiedModule(options.hostModule, hostVersionRange)) {
+        error = new Error('Cannot find satisfied version of module \'' + options.hostModule + '\'.');
+        error.code = 'MODULE_NOT_FOUND';
+        error.isRetried = true;
+        initModule(function() {
+          if (cbInitDone) { cbInitDone(); }
+          getHostCmd(cbReceiveHostCmd); // Retry
+        });
+        return cbReceiveHostCmd(error);
+      }
     } catch (error) {
       if (error.code === 'MODULE_NOT_FOUND') {
         error.isRetried = true;
         initModule(function() {
           if (cbInitDone) { cbInitDone(); }
-          getHostCmd(cb); // Retry
+          getHostCmd(cbReceiveHostCmd); // Retry
         });
       }
-      return cb(error);
-    }
-
-    if (versionRange) {
-      // This works as if `module.require.resolve()`
-      // targetPath = baseModuleObj.require.resolve(options.hostModule)
-      // https://github.com/nodejs/node/blob/master/lib/internal/module.js
-      targetPath = baseModuleObj.constructor._resolveFilename(
-        options.hostModule, baseModuleObj);
-      if (!targetPath) { throw new Error('Cannot get module path'); }
-
-      if ((targetPackageRoot = getPackageRoot(pathUtil.dirname(targetPath)))) {
-        targetPackageInfo = require((targetPackagePath = pathUtil.join(targetPackageRoot, 'package')));
-        if ((version = targetPackageInfo.version)) {
-          if (!semver.valid(version)) { throw new TypeError('Invalid Version: ' + version); }
-          if (!semver.satisfies(version, versionRange)) {
-            error = new Error('Cannot find module \'' + options.hostModule + '\' version');
-            error.code = 'MODULE_NOT_FOUND';
-            error.isRetried = true;
-            delete require.cache[targetPath]; // Unload forcibly
-            delete require.cache[require.resolve(targetPackagePath)]; // Remove cached targetPackageInfo
-            initModule(function() {
-              if (cbInitDone) { cbInitDone(); }
-              getHostCmd(cb); // Retry
-            });
-            return cb(error);
-          }
-        }
-      }
+      return cbReceiveHostCmd(error);
     }
   }
 
-  return !options.funcGetHostPath ? cb(null, 'node') :
-    (hostCmd = options.funcGetHostPath(targetModuleExp)) ?
-      cb(null, hostCmd) : cb(new Error('Couldn\'t get command.'));
+  if (options.dependenciesSatisfy) {
+    if (!hostVersionRange) {
+      throw new Error('`options.hostModule` and `package.json` are required.');
+    }
+    if (basePackageInfo.dependencies &&
+        !(Object.keys(basePackageInfo.dependencies).every(function(moduleName) {
+          return moduleName === options.hostModule || // options.hostModule was already checked.
+            isSatisfiedModule(moduleName, basePackageInfo.dependencies[moduleName]);
+        }))) {
+      error = new Error('Cannot find satisfied version of dependencies.');
+      error.code = 'MODULE_NOT_FOUND';
+      error.isRetried = true;
+      initModule(function() {
+        if (cbInitDone) { cbInitDone(); }
+        getHostCmd(cbReceiveHostCmd); // Retry
+      });
+      return cbReceiveHostCmd(error);
+    }
+  }
+
+  return !options.funcGetHostPath ? cbReceiveHostCmd(null, 'node') :
+    (hostCmd = options.funcGetHostPath(hostModuleExports)) ?
+      cbReceiveHostCmd(null, hostCmd) : cbReceiveHostCmd(new Error('Couldn\'t get command.'));
 }
 
-/* eslint valid-jsdoc: [2, {"requireReturn": false}] */
 /**
  * @param {Object} message - Message that is sent.
  * @param {Array<string>} args - Arguments that are passed to host command.
- * @param {function} cbResponse - Callback function that is called when host returned response.
- * @param {function} [cbInitDone] - Callback function that is called when target module was initialized if it is done.
+ * @param {Function} cbResponse - Callback function that is called when host returned response.
+ * @param {Function} [cbInitDone] - Callback function that is called when target module was
+ *    initialized if it is done.
+ * @returns {void}
  */
-/* eslint valid-jsdoc: [2, { prefer: { "return": "returns"}}] */
 exports.sendRequest = function(message, args, cbResponse, cbInitDone) { // cb(error, message)
   var spawn = require('child_process').spawn;
 
@@ -264,7 +308,7 @@ exports.sendRequest = function(message, args, cbResponse, cbInitDone) { // cb(er
 
     console.info('Start child process...');
     getHostCmd(function(error, hostCmd) {
-      if (error) { return cbResponse(error); }
+      if (error) { cbResponse(error); return; }
 
       childProc = spawn(hostCmd, args, {stdio: options.ipc ? ['ipc', 'pipe', 'pipe'] : 'pipe'});
 
@@ -329,11 +373,10 @@ exports.sendRequest = function(message, args, cbResponse, cbInitDone) { // cb(er
   }
 };
 
-/* eslint valid-jsdoc: [2, {"requireReturn": false}] */
 /**
  * @param {boolean} force - Disconnect immediately.
+ * @returns {void}
  */
-/* eslint valid-jsdoc: [2, { prefer: { "return": "returns"}}] */
 exports.closeHost = function(force) {
   if (childProc) {
     if (force) {
@@ -351,12 +394,11 @@ exports.closeHost = function(force) {
   }
 };
 
-/* eslint valid-jsdoc: [2, {"requireReturn": false}] */
 /**
- * @param {function} cbRequest - Callback function that is called when received request.
- * @param {function} cbClose - Callback function that is called when host is closed by main.
+ * @param {Function} cbRequest - Callback function that is called when received request.
+ * @param {Function} cbClose - Callback function that is called when host is closed by main.
+ * @returns {void}
  */
-/* eslint valid-jsdoc: [2, { prefer: { "return": "returns"}}] */
 exports.receiveRequest = function(cbRequest, cbClose) { // cbRequest(message, cbResponse(message))
   var closed;
 

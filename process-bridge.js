@@ -11,13 +11,15 @@
 var
   RE_MESSAGE_LINE = /^([^\n\r]*)[\n\r]+([\s\S]*)$/,
   IPC_RETRY_INTERVAL = 1000,
-  options = { // Default Options
+
+  options = { // Default options
     hostModule: 'electron-prebuilt',
     funcGetHostPath: function(moduleExports) { return moduleExports; },
     dependenciesSatisfy: true,
     ipc: true,
     singleTask: true
   },
+
   requests = {}, curRequestId = 0, tranRequests = {}, retryTimer,
   childProc, stdioData = '', stderrData = '', waitingRequests, triedInit;
 

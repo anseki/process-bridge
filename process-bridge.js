@@ -24,12 +24,19 @@ var
   childProc, stdioData = '', stderrData = '', waitingRequests, triedInit;
 
 /**
+ * Callback that handles the parsed message object.
+ * @callback ProcMessage
+ * @param {string} requestId - ID of the message.
+ * @param {Object} message - The message object.
+ */
+
+/**
  * Normalize an IPC message, and call the function with `requestId`.
  * @param {Object} message - IPC message.
- * @param {Function} cb - Callback function that is called with `requestId`, `message`.
+ * @param {ProcMessage} cb - Callback function that is called with `requestId`, `message`.
  * @returns {any} result - Something that was returned by `cb`.
  */
-function parseIpcMessage(message, cb) { // cb(requestId, message)
+function parseIpcMessage(message, cb) {
   var requestId;
   if (message._requestId == null) { // eslint-disable-line eqeqeq
     throw new Error('Invalid message: ' + JSON.stringify(message));
@@ -39,7 +46,16 @@ function parseIpcMessage(message, cb) { // cb(requestId, message)
   return cb(+requestId, message);
 }
 
-function parseMessageLines(lines, getLine, cb) { // cb(requestId, message)
+/**
+ * Normalize an IPC message from input stream, and call the function with `requestId`.
+ *    Extract those from current input stream that includes chunk data, and return remaining data.
+ * @param {string} lines - current input stream.
+ * @param {boolean} [getLine] - Get a line as plain string.
+ * @param {ProcMessage|Function} cb - Callback function that is called with `requestId`, `message`.
+ *    If `getLine` is `true`, the callback is called with a line.
+ * @returns {string} lines - remaining data.
+ */
+function parseMessageLines(lines, getLine, cb) {
   var matches, line, lineParts;
 
   if (arguments.length < 3) {
@@ -240,14 +256,21 @@ function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, h
 }
 
 /**
+ * Callback that receives result from host.
+ * @callback CbResponse
+ * @param {Error|null} error - ID of the message.
+ * @param {Object} message - The message object.
+ */
+
+/**
  * @param {Object} message - Message that is sent.
  * @param {Array<string>} args - Arguments that are passed to host command.
- * @param {Function} cbResponse - Callback function that is called when host returned response.
+ * @param {CbResponse} cbResponse - Callback function that is called when host returned response.
  * @param {Function} [cbInitDone] - Callback function that is called when target module was
  *    initialized if it is done.
  * @returns {void}
  */
-exports.sendRequest = function(message, args, cbResponse, cbInitDone) { // cb(error, message)
+exports.sendRequest = function(message, args, cbResponse, cbInitDone) {
   var spawn = require('child_process').spawn;
 
   // Recover failed IPC-sending.
@@ -397,11 +420,24 @@ exports.closeHost = function(force) {
 };
 
 /**
- * @param {Function} cbRequest - Callback function that is called when received request.
+ * Callback that handles the response message object.
+ * @callback ProcResponse
+ * @param {Object} message - The message object.
+ */
+
+/**
+ * Callback that receives result that is returned to client.
+ * @callback CbRequest
+ * @param {Object} message - The request message object.
+ * @param {ProcResponse} cb - Callback function that is called with response message.
+ */
+
+/**
+ * @param {CbRequest} cbRequest - Callback function that is called when received request.
  * @param {Function} cbClose - Callback function that is called when host is closed by main.
  * @returns {void}
  */
-exports.receiveRequest = function(cbRequest, cbClose) { // cbRequest(message, cbResponse(message))
+exports.receiveRequest = function(cbRequest, cbClose) {
   var closed;
 
   function sendMessage(requestId, message) {

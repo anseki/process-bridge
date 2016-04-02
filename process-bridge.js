@@ -31,7 +31,7 @@ var
  */
 
 /**
- * Normalize an IPC message, and call `ProcMessage` callback with `requestId`.
+ * Normalize an IPC message.
  * @param {Object} message - IPC message.
  * @param {ProcMessage} cb - Callback function that is called.
  * @returns {any} result - Something that was returned by `cb`.
@@ -47,8 +47,7 @@ function parseIpcMessage(message, cb) {
 }
 
 /**
- * Normalize an IPC message from input stream, and call `ProcMessage` callback with `requestId`.
- *    Extract those from current input stream that includes chunk data, and return remaining data.
+ * Extract & normalize an IPC message from current input stream lines, and return remaining data.
  * @param {string} lines - current input stream.
  * @param {boolean} [getLine] - Get a line as plain string.
  * @param {ProcMessage|Function} cb - Callback function that is called. It is called with a line if `getLine` is `true`.

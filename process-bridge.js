@@ -92,14 +92,19 @@ function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, h
     basePackageRoot, basePackageInfo, error,
     hostVersionRange, hostModuleExports, hostCmd;
 
+  function fsExist(path) {
+    var fs = require('fs');
+    try {
+      fs.accessSync(path); // Check only existence.
+      return true;
+    } catch (error) { /* ignore */ }
+    return false;
+  }
+
   function getPackageRoot(startPath) {
-    var fs = require('fs'),
-      dirPath = pathUtil.resolve(startPath || ''), parentPath;
+    var dirPath = pathUtil.resolve(startPath || ''), parentPath;
     while (true) {
-      try {
-        fs.accessSync(pathUtil.join(dirPath, 'package.json')); // Check only existence.
-        return dirPath;
-      } catch (error) { /* ignore */ }
+      if (fsExist(pathUtil.join(dirPath, 'package.json'))) { return dirPath; }
       parentPath = pathUtil.join(dirPath, '..');
       if (parentPath === dirPath) { break; } // root
       dirPath = parentPath;
@@ -109,21 +114,104 @@ function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, h
 
   function initModule(cb) {
     var npm, npmPath;
+
+    function getNpm() {
+      try {
+        npm = require('npm');
+        return true;
+      } catch (error) { /* ignore */ }
+
+      // Retry with `npm root -g` (It might be not environment variables)
+      console.warn('Try to get npm in global directory.');
+      try {
+        npm = require(
+          (npmPath = pathUtil.join(
+            require('child_process').execSync('npm root -g', {encoding: 'utf8'}).replace(/\n+$/, ''),
+            'npm'))
+          );
+        return true;
+      } catch (error) { /* ignore */ }
+
+      // Retry with `npm help` v1.1.0+
+      console.warn('Try to get npm via usage info.');
+      try {
+        npmPath = (function() {
+          var usageInfo = require('child_process').execSync('npm help', {encoding: 'utf8'}),
+            matches = /npm\@\S+ +([^\n]+)/.exec(usageInfo);
+          return matches ? matches[1] : null;
+        })();
+        if (npmPath) {
+          npm = require(npmPath);
+          return true;
+        }
+      } catch (error) { /* ignore */ }
+
+      // Retry with `npm` path
+      console.warn('Try to get npm via npm command.');
+      try {
+        npmPath = (function() {
+          var path = require('child_process').execSync(
+              // Win <Vista and <Server2008 don't have `where`.
+              (process.platform === 'win32' ? 'where' : 'which') + ' npm', {encoding: 'utf8'}),
+            exPath;
+          path = (path || '').replace(/^([^\n]+)[\s\S]*/, '$1');
+          if (!path) { return null; }
+          path = pathUtil.dirname(path);
+          if (/[\/\\]npm[\/\\]bin$/.test(path)) {
+            return pathUtil.join(path, '..');
+          } else if (/[\/\\]bin$/.test(path)) {
+            if (fsExist((exPath = pathUtil.join(path, '../node_modules/npm')))) {
+              return exPath;
+            } else if (fsExist((exPath = pathUtil.join(path, '../lib/node_modules/npm')))) {
+              return exPath;
+            }
+          } else if (fsExist((exPath = pathUtil.join(path, 'node_modules/npm')))) {
+            return exPath;
+          } else if (fsExist((exPath = pathUtil.join(path, 'lib/node_modules/npm')))) {
+            return exPath;
+          }
+          return null;
+        })();
+        if (npmPath) {
+          npm = require(npmPath);
+          return true;
+        }
+      } catch (error) { /* ignore */ }
+
+      // Retry with `node` path
+      console.warn('Try to get npm via node path.');
+      try {
+        npmPath = (function() {
+          var path = require('child_process').execSync(
+            'node -p "process.execPath"', {encoding: 'utf8'}), // not current executable
+            exPath;
+          path = pathUtil.dirname(path);
+          if (/[\/\\]bin$/.test(path)) {
+            if (fsExist((exPath = pathUtil.join(path, '../node_modules/npm')))) {
+              return exPath;
+            } else if (fsExist((exPath = pathUtil.join(path, '../lib/node_modules/npm')))) {
+              return exPath;
+            }
+          } else if (fsExist((exPath = pathUtil.join(path, 'node_modules/npm')))) {
+            return exPath;
+          } else if (fsExist((exPath = pathUtil.join(path, 'lib/node_modules/npm')))) {
+            return exPath;
+          }
+          return null;
+        })();
+        if (npmPath) {
+          npm = require(npmPath);
+          return true;
+        }
+      } catch (error) { /* ignore */ }
+
+      return false;
+    }
+
     if (triedInit) { throw new Error('Cannot initialize module'); }
     triedInit = true;
 
-    try {
-      npm = require('npm');
-    } catch (error) {
-      if (error.code !== 'MODULE_NOT_FOUND') { throw error; }
-      // Retry with full path
-      console.warn('Try to get npm in global directory.');
-      npm = require(
-        (npmPath = pathUtil.join(
-          require('child_process').execSync('npm root -g', {encoding: 'utf8'}).replace(/\n+$/, ''),
-          'npm'))
-        );
-    }
+    if (!getNpm()) { throw new Error('Cannot get npm'); }
 
     console.info('Base directory path: %s', baseDir);
     npm.load({prefix: baseDir,
@@ -188,7 +276,7 @@ function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, h
 
     delete require.cache[modulePath]; // Unload forcibly
     delete require.cache[packagePath]; // Remove cached targetPackageInfo
-    baseModuleObj.constructor._pathCache = {}; // Remove cached pathes
+    baseModuleObj.constructor._pathCache = {}; // Remove cached paths
     return satisfied;
   }
 

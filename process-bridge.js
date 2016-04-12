@@ -116,27 +116,33 @@ function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, h
     var npm, npmPath;
 
     function getNpm() {
+      var execSync;
+
+      function lookAround(path) {
+        var exPath;
+        if (/[\/\\]bin$/.test(path)) {
+          path = pathUtil.join(path, '..');
+        }
+        if (fsExist((exPath = pathUtil.join(path, 'node_modules/npm')))) {
+          return exPath;
+        } else if (fsExist((exPath = pathUtil.join(path, 'lib/node_modules/npm')))) {
+          return exPath;
+        }
+        return null;
+      }
+
       try {
         npm = require('npm');
         return true;
       } catch (error) { /* ignore */ }
 
-      // Retry with `npm root -g` (It might be not environment variables)
-      console.warn('Try to get npm in global directory.');
-      try {
-        npm = require(
-          (npmPath = pathUtil.join(
-            require('child_process').execSync('npm root -g', {encoding: 'utf8'}).replace(/\n+$/, ''),
-            'npm'))
-          );
-        return true;
-      } catch (error) { /* ignore */ }
+      execSync = require('child_process').execSync;
 
-      // Retry with `npm help` v1.1.0+
+      // Retry with `npm help` (v1.1.0+)
       console.warn('Try to get npm via usage info.');
       try {
         npmPath = (function() {
-          var usageInfo = require('child_process').execSync('npm help', {encoding: 'utf8'}),
+          var usageInfo = execSync('npm help', {encoding: 'utf8'}),
             matches = /npm\@\S+ +([^\n]+)/.exec(usageInfo);
           return matches ? matches[1] : null;
         })();
@@ -147,30 +153,18 @@ function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, h
       } catch (error) { /* ignore */ }
 
       // Retry with `npm` path
-      console.warn('Try to get npm via npm command.');
+      console.warn('Try to get npm via command path.');
       try {
         npmPath = (function() {
-          var path = require('child_process').execSync(
-              // Win <Vista and <Server2008 don't have `where`.
-              (process.platform === 'win32' ? 'where' : 'which') + ' npm', {encoding: 'utf8'}),
-            exPath;
+          var path = execSync( // Win <Vista and <Server2008 don't have `where`.
+            (process.platform === 'win32' ? 'where' : 'which') + ' npm', {encoding: 'utf8'});
           path = (path || '').replace(/^([^\n]+)[\s\S]*/, '$1');
           if (!path) { return null; }
           path = pathUtil.dirname(path);
           if (/[\/\\]npm[\/\\]bin$/.test(path)) {
             return pathUtil.join(path, '..');
-          } else if (/[\/\\]bin$/.test(path)) {
-            if (fsExist((exPath = pathUtil.join(path, '../node_modules/npm')))) {
-              return exPath;
-            } else if (fsExist((exPath = pathUtil.join(path, '../lib/node_modules/npm')))) {
-              return exPath;
-            }
-          } else if (fsExist((exPath = pathUtil.join(path, 'node_modules/npm')))) {
-            return exPath;
-          } else if (fsExist((exPath = pathUtil.join(path, 'lib/node_modules/npm')))) {
-            return exPath;
           }
-          return null;
+          return lookAround(path);
         })();
         if (npmPath) {
           npm = require(npmPath);
@@ -178,26 +172,20 @@ function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, h
         }
       } catch (error) { /* ignore */ }
 
+      // Retry with `npm root -g` (It might be not environment variables)
+      console.warn('Try to get npm in global directory.');
+      try {
+        npm = require((npmPath = pathUtil.join(
+          execSync('npm root -g', {encoding: 'utf8'}).replace(/\n+$/, ''), 'npm')));
+        return true;
+      } catch (error) { /* ignore */ }
+
       // Retry with `node` path
       console.warn('Try to get npm via node path.');
       try {
         npmPath = (function() {
-          var path = require('child_process').execSync(
-            'node -p "process.execPath"', {encoding: 'utf8'}), // not current executable
-            exPath;
-          path = pathUtil.dirname(path);
-          if (/[\/\\]bin$/.test(path)) {
-            if (fsExist((exPath = pathUtil.join(path, '../node_modules/npm')))) {
-              return exPath;
-            } else if (fsExist((exPath = pathUtil.join(path, '../lib/node_modules/npm')))) {
-              return exPath;
-            }
-          } else if (fsExist((exPath = pathUtil.join(path, 'node_modules/npm')))) {
-            return exPath;
-          } else if (fsExist((exPath = pathUtil.join(path, 'lib/node_modules/npm')))) {
-            return exPath;
-          }
-          return null;
+          var path = execSync('node -p "process.execPath"', {encoding: 'utf8'}); // not current executable
+          return lookAround(pathUtil.dirname(path));
         })();
         if (npmPath) {
           npm = require(npmPath);

@@ -81,11 +81,12 @@ function parseMessageLines(lines, getLine, cb) {
 }
 
 /**
+ * @param {Function} errorHandle - Wrapper that catch an error.
  * @param {Function} cbReceiveHostCmd - Callback function that is called with host command.
  * @param {Function} cbInitDone - Callback function that is called when module was initialized.
- * @returns {any} result - Something that was returned by `cbReceiveHostCmd`.
+ * @returns {void}
  */
-function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, hostPath)
+function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, hostPath)
   var pathUtil = require('path'), semver = require('semver'),
     baseModuleObj = module.parent,
     baseDir = pathUtil.dirname(baseModuleObj.filename),
@@ -205,7 +206,7 @@ function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, h
     npm.load({prefix: baseDir,
       npat: false, dev: false, production: true, // disable `devDependencies`
       loglevel: 'silent', spin: false, progress: false // disable progress indicator
-    }, function(error) {
+    }, errorHandle(function(error) {
       var npmSpawn, npmSpawnPath;
       if (error) { throw error; }
 
@@ -229,12 +230,12 @@ function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, h
       };
 
       // `hostVersionRange` means that `options.hostModule` and version are specified in `package.json`.
-      npm.commands.install(hostVersionRange ? [] : [options.hostModule], function(error) {
+      npm.commands.install(hostVersionRange ? [] : [options.hostModule], errorHandle(function(error) {
         if (error) { throw error; }
         cb();
-      });
+      }));
       // npm.registry.log.on('log', function(message) { console.dir(message); });
-    });
+    }));
   }
 
   function isSatisfiedModule(moduleName, versionRange) {
@@ -288,19 +289,21 @@ function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, h
         error.isRetried = true;
         initModule(function() {
           if (cbInitDone) { cbInitDone(); }
-          getHostCmd(cbReceiveHostCmd); // Retry
+          getHostCmd(errorHandle, cbReceiveHostCmd); // Retry
         });
-        return cbReceiveHostCmd(error);
+        cbReceiveHostCmd(error);
+        return;
       }
     } catch (error) {
       if (error.code === 'MODULE_NOT_FOUND') {
         error.isRetried = true;
         initModule(function() {
           if (cbInitDone) { cbInitDone(); }
-          getHostCmd(cbReceiveHostCmd); // Retry
+          getHostCmd(errorHandle, cbReceiveHostCmd); // Retry
         });
       }
-      return cbReceiveHostCmd(error);
+      cbReceiveHostCmd(error);
+      return;
     }
   }
 
@@ -318,15 +321,20 @@ function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, h
       error.isRetried = true;
       initModule(function() {
         if (cbInitDone) { cbInitDone(); }
-        getHostCmd(cbReceiveHostCmd); // Retry
+        getHostCmd(errorHandle, cbReceiveHostCmd); // Retry
       });
-      return cbReceiveHostCmd(error);
+      cbReceiveHostCmd(error);
+      return;
     }
   }
 
-  return !options.funcGetHostPath ? cbReceiveHostCmd(null, 'node') :
-    (hostCmd = options.funcGetHostPath(hostModuleExports)) ?
-      cbReceiveHostCmd(null, hostCmd) : cbReceiveHostCmd(new Error('Couldn\'t get command.'));
+  if (!options.funcGetHostPath) {
+    cbReceiveHostCmd(null, 'node');
+  } else if ((hostCmd = options.funcGetHostPath(hostModuleExports))) {
+    cbReceiveHostCmd(null, hostCmd);
+  } else {
+    cbReceiveHostCmd(new Error('Couldn\'t get command.'));
+  }
 }
 
 /**
@@ -338,7 +346,7 @@ function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, h
 
 /**
  * @param {Object} message - Message that is sent.
- * @param {Array<string>} args - Arguments that are passed to host command.
+ * @param {Array<string>|null} args - Arguments that are passed to host command.
  * @param {CbResponse} cbResponse - Callback function that is called when host returned response.
  * @param {Function} [cbInitDone] - Callback function that is called when target module was
  *    initialized if it is done.
@@ -346,6 +354,17 @@ function getHostCmd(cbReceiveHostCmd, cbInitDone) { // cbReceiveHostCmd(error, h
  */
 exports.sendRequest = function(message, args, cbResponse, cbInitDone) {
   var spawn = require('child_process').spawn;
+
+  function errorHandle(process) {
+    return function() {
+      try {
+        return process.apply(null, arguments);
+      } catch (error) {
+        cbResponse(error);
+        return false;
+      }
+    };
+  }
 
   // Recover failed IPC-sending.
   // In some environment, IPC message does not reach to child, with no error and return value.
@@ -359,7 +378,7 @@ exports.sendRequest = function(message, args, cbResponse, cbInitDone) {
         console.info('Try to send IPC message: %d', +requestId);
         childProc.send(tranRequests[requestId]);
       });
-      retryTimer = setTimeout(sendIpc, IPC_RETRY_INTERVAL);
+      retryTimer = setTimeout(errorHandle(sendIpc), IPC_RETRY_INTERVAL);
     }
   }
 
@@ -393,7 +412,7 @@ exports.sendRequest = function(message, args, cbResponse, cbInitDone) {
   }
 
   if (childProc) {
-    sendMessage(message, cbResponse);
+    if ((errorHandle(sendMessage))(message, cbResponse) === false) { return; }
   } else {
     if (waitingRequests) { // Getting host was already started.
       if (options.singleTask) {
@@ -406,12 +425,12 @@ exports.sendRequest = function(message, args, cbResponse, cbInitDone) {
     waitingRequests = [{message: message, cb: cbResponse}];
 
     console.info('Start child process...');
-    getHostCmd(function(error, hostCmd) {
+    if (errorHandle(getHostCmd)(errorHandle, errorHandle(function(error, hostCmd) {
       if (error) { cbResponse(error); return; }
 
       childProc = spawn(hostCmd, args, {stdio: options.ipc ? ['ipc', 'pipe', 'pipe'] : 'pipe'});
 
-      childProc.on('exit', function(code, signal) {
+      childProc.on('exit', errorHandle(function(code, signal) {
         var error;
         console.info('Child process exited with code: %s', code);
         childProc = null;
@@ -421,20 +440,20 @@ exports.sendRequest = function(message, args, cbResponse, cbInitDone) {
           error.signal = signal;
           throw error;
         }
-      });
+      }));
 
-      childProc.on('error', function(error) { throw error; });
+      childProc.on('error', errorHandle(function(error) { throw error; }));
 
       childProc.stderr.setEncoding('utf8');
-      childProc.stderr.on('data', function(chunk) {
+      childProc.stderr.on('data', errorHandle(function(chunk) {
         stderrData = parseMessageLines(stderrData + chunk, true,
           function(line) { throw new Error(line); });
-      });
-      childProc.stderr.on('error', function(error) { throw error; });
+      }));
+      childProc.stderr.on('error', errorHandle(function(error) { throw error; }));
 
       if (options.ipc) {
 
-        childProc.on('message', function(message) {
+        childProc.on('message', errorHandle(function(message) {
           parseIpcMessage(message, function(requestId, message) {
             if (message._accepted) { // to recover failed IPC-sending
               delete tranRequests[requestId];
@@ -442,7 +461,7 @@ exports.sendRequest = function(message, args, cbResponse, cbInitDone) {
             }
             procResponse(requestId, message);
           });
-        });
+        }));
 
         childProc.on('disconnect', function() {
           console.info('Child process disconnected');
@@ -452,12 +471,12 @@ exports.sendRequest = function(message, args, cbResponse, cbInitDone) {
       } else {
 
         childProc.stdout.setEncoding('utf8');
-        childProc.stdout.on('data', function(chunk) {
+        childProc.stdout.on('data', errorHandle(function(chunk) {
           stdioData = parseMessageLines(stdioData + chunk, procResponse);
-        });
-        childProc.stdout.on('error', function(error) { throw error; });
+        }));
+        childProc.stdout.on('error', errorHandle(function(error) { throw error; }));
 
-        childProc.stdin.on('error', function(error) { throw error; });
+        childProc.stdin.on('error', errorHandle(function(error) { throw error; }));
 
         childProc.on('close', function(code) {
           console.info('Child process pipes closed with code: %s', code);
@@ -468,7 +487,7 @@ exports.sendRequest = function(message, args, cbResponse, cbInitDone) {
 
       waitingRequests.forEach(function(request) { sendMessage(request.message, request.cb); });
       waitingRequests = null;
-    }, cbInitDone);
+    }), cbInitDone) === false) { return; }
   }
 };
 
@@ -488,7 +507,9 @@ exports.closeHost = function(force) {
     } else {
       requests = {}; // Ignore all response.
       tranRequests = {}; // Cancel all requests.
-      exports.sendRequest({_close: true}, [], function() {});
+      try {
+        exports.sendRequest({_close: true}, [], function() {});
+      } catch (error) { /* ignore */ }
     }
   }
 };

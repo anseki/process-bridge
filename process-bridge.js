@@ -425,7 +425,7 @@ exports.sendRequest = function(message, args, cbResponse, cbInitDone) {
     waitingRequests = [{message: message, cb: cbResponse}];
 
     console.info('Start child process...');
-    if (errorHandle(getHostCmd)(errorHandle, errorHandle(function(error, hostCmd) {
+    if ((errorHandle(getHostCmd))(errorHandle, errorHandle(function(error, hostCmd) {
       if (error) { cbResponse(error); return; }
 
       childProc = spawn(hostCmd, args, {stdio: options.ipc ? ['ipc', 'pipe', 'pipe'] : 'pipe'});

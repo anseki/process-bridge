@@ -1,6 +1,6 @@
 {
   "name": "process-bridge",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "title": "processBridge",
   "description": "Simple IPC Wrapper",
   "keywords": [

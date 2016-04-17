@@ -253,7 +253,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
     }
 
     if (!(packageRoot = getPackageRoot(pathUtil.dirname(modulePath)))) {
-      throw new Error('Cannot find module \'' + moduleName + '\' path');
+      throw new Error('Cannot get path of module \'' + moduleName + '\'');
     }
     packageInfo = require( // `resolve` to make sure
       (packagePath = require.resolve(pathUtil.join(packageRoot, 'package.json'))));
@@ -271,7 +271,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
 
   if ((basePackageRoot = getPackageRoot(baseDir))) {
     baseDir = basePackageRoot;
-    basePackageInfo = require(pathUtil.join(basePackageRoot, 'package'));
+    basePackageInfo = require(pathUtil.join(basePackageRoot, 'package.json'));
   }
 
   if (options.hostModule) {

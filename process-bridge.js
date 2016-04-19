@@ -346,7 +346,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
 
 /**
  * @param {Object} message - Message that is sent.
- * @param {Array<string>|null} args - Arguments that are passed to host command.
+ * @param {Array<string>} [args] - Arguments that are passed to host command.
  * @param {CbResponse} cbResponse - Callback function that is called when host returned response.
  * @param {Function} [cbInitDone] - Callback function that is called when target module was
  *    initialized if it is done.
@@ -406,7 +406,8 @@ exports.sendRequest = function(message, args, cbResponse, cbInitDone) {
     }
   }
 
-  if (arguments.length < 3) {
+  if (typeof args === 'function') {
+    cbInitDone = cbResponse;
     cbResponse = args;
     args = [];
   }

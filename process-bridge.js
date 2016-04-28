@@ -21,7 +21,7 @@ var
   },
 
   requests = {}, curRequestId = 0, tranRequests = {}, retryTimer,
-  childProc, stdioData = '', stderrData = '', waitingRequests, triedInit;
+  childProc, stdioData = '', stderrData = '', waitingRequests, triedInit, orgWd;
 
 /**
  * Callback that handles the parsed message object.
@@ -203,6 +203,10 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
     if (!getNpm()) { throw new Error('Cannot get npm'); }
 
     console.info('Base directory path: %s', baseDir);
+    // npm might ignore `prefix` option.
+    if (!orgWd) { orgWd = process.cwd(); }
+    process.chdir(baseDir);
+
     npm.load({prefix: baseDir,
       npat: false, dev: false, production: true, // disable `devDependencies`
       loglevel: 'silent', spin: false, progress: false // disable progress indicator
@@ -231,6 +235,12 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
 
       // `hostVersionRange` means that `options.hostModule` and version are specified in `package.json`.
       npm.commands.install(hostVersionRange ? [] : [options.hostModule], errorHandle(function(error) {
+        if (orgWd) { // restore
+          try {
+            process.chdir(orgWd);
+            orgWd = null;
+          } catch (error) { /* ignore */ }
+        }
         if (error) { throw error; }
         cb();
       }));
@@ -355,11 +365,17 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
 exports.sendRequest = function(message, args, cbResponse, cbInitDone) {
   var spawn = require('child_process').spawn;
 
-  function errorHandle(process) {
+  function errorHandle(fn) {
     return function() {
       try {
-        return process.apply(null, arguments);
+        return fn.apply(null, arguments);
       } catch (error) {
+        if (!error.isRetried && orgWd) { // restore
+          try {
+            process.chdir(orgWd);
+            orgWd = null;
+          } catch (error) { /* ignore */ }
+        }
         cbResponse(error);
         return false;
       }

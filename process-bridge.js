@@ -360,9 +360,11 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
  * @param {CbResponse} cbResponse - Callback function that is called when host returned response.
  * @param {Function} [cbInitDone] - Callback function that is called when target module was
  *    initialized if it is done.
+ * @param {Function} [cbStderr] - Callback function that is called with message when host output STDERR.
+ *    If the callback returned `true`, the error is ignored.
  * @returns {void}
  */
-exports.sendRequest = function(message, args, cbResponse, cbInitDone) {
+exports.sendRequest = function(message, args, cbResponse, cbInitDone, cbStderr) {
   var spawn = require('child_process').spawn;
 
   function errorHandle(fn) {
@@ -463,8 +465,9 @@ exports.sendRequest = function(message, args, cbResponse, cbInitDone) {
 
       childProc.stderr.setEncoding('utf8');
       childProc.stderr.on('data', errorHandle(function(chunk) {
-        stderrData = parseMessageLines(stderrData + chunk, true,
-          function(line) { throw new Error(line); });
+        stderrData = parseMessageLines(stderrData + chunk, true, function(line) {
+          if (!cbStderr || !cbStderr(line)) { throw new Error(line); }
+        });
       }));
       childProc.stderr.on('error', errorHandle(function(error) { throw error; }));
 

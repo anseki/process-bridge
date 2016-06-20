@@ -25,7 +25,7 @@ var
 
 /**
  * Callback that handles the parsed message object.
- * @callback ProcMessage
+ * @callback procMessage
  * @param {string} requestId - ID of the message.
  * @param {Object} message - The message object.
  */
@@ -33,7 +33,7 @@ var
 /**
  * Normalize an IPC message.
  * @param {Object} message - IPC message.
- * @param {ProcMessage} cb - Callback function that is called.
+ * @param {procMessage} cb - Callback function that is called.
  * @returns {any} result - Something that was returned by `cb`.
  */
 function parseIpcMessage(message, cb) {
@@ -50,7 +50,7 @@ function parseIpcMessage(message, cb) {
  * Extract & normalize an IPC message from current input stream lines, and return remaining data.
  * @param {string} lines - current input stream.
  * @param {boolean} [getLine] - Get a line as plain string.
- * @param {ProcMessage|Function} cb - Callback function that is called. It is called with a line if `getLine` is `true`.
+ * @param {procMessage|Function} cb - Callback function that is called. It is called with a line if `getLine` is `true`.
  * @returns {string} lines - remaining data.
  */
 function parseMessageLines(lines, getLine, cb) {
@@ -220,6 +220,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
           pathUtil.join(
             pathUtil.dirname(require.resolve(npmPath || 'npm')), // npmPath is package dir
             'utils/spawn.js'));
+        console.warn('Try to load: ' + npmSpawnPath);
         require(npmSpawnPath);
       } catch (error) {
         throw error.code === 'MODULE_NOT_FOUND' ?
@@ -349,7 +350,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
 
 /**
  * Callback that receives result from host.
- * @callback CbResponse
+ * @callback cbResponse
  * @param {Error|null} error - ID of the message.
  * @param {Object} message - The message object.
  */
@@ -357,7 +358,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
 /**
  * @param {Object} message - Message that is sent.
  * @param {Array<string>} [args] - Arguments that are passed to host command.
- * @param {CbResponse} cbResponse - Callback function that is called when host returned response.
+ * @param {cbResponse} cbResponse - Callback function that is called when host returned response.
  * @param {Function} [cbInitDone] - Callback function that is called when target module was
  *    initialized if it is done.
  * @param {Function} [cbStderr] - Callback function that is called with message when host output STDERR.
@@ -536,19 +537,19 @@ exports.closeHost = function(force) {
 
 /**
  * Callback that handles the response message object.
- * @callback ProcResponse
+ * @callback procResponse
  * @param {Object} message - The message object.
  */
 
 /**
  * Callback that receives result that is returned to client.
- * @callback CbRequest
+ * @callback cbRequest
  * @param {Object} message - The request message object.
- * @param {ProcResponse} cb - Callback function that is called with response message.
+ * @param {procResponse} cb - Callback function that is called with response message.
  */
 
 /**
- * @param {CbRequest} cbRequest - Callback function that is called when received request.
+ * @param {cbRequest} cbRequest - Callback function that is called when received request.
  * @param {Function} cbClose - Callback function that is called when host is closed by main.
  * @returns {void}
  */

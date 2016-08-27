@@ -201,6 +201,13 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
     triedInit = true;
 
     if (!getNpm()) { throw new Error('Cannot get npm'); }
+    console.info('npm directory path: ' + (npmPath || ''));
+    try {
+      npmPath = require.resolve(npmPath || 'npm'); // npmPath is package dir
+    } catch (error) {
+      throw error;
+    }
+    console.info('npm path: ' + npmPath);
 
     console.info('Base directory path: %s', baseDir);
     // npm might ignore `prefix` option.
@@ -216,10 +223,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
 
       // Wrap `spawn.js` for dropping output from child.
       try {
-        npmSpawnPath = require.resolve(
-          pathUtil.join(
-            pathUtil.dirname(require.resolve(npmPath || 'npm')), // npmPath is package dir
-            'utils/spawn.js'));
+        npmSpawnPath = require.resolve(pathUtil.join(pathUtil.dirname(npmPath), 'utils/spawn.js'));
         console.warn('Try to load: ' + npmSpawnPath);
         require(npmSpawnPath);
       } catch (error) {

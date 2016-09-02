@@ -212,11 +212,8 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
     triedInit = true;
 
     if (!getNpm()) {
-      throw (function() {
-        var error = new Error('Cannot get npm');
-        error.getNpmTrace = getNpmTrace;
-        return error;
-      })();
+      getNpmTrace.forEach(function(line) { console.error('[getNpmTrace] ' + line); });
+      throw new Error('Cannot get npm');
     }
     console.info('npm directory path: ' + (npmPath || ''));
     try {

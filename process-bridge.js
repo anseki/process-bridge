@@ -114,7 +114,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
   }
 
   function initModule(cb) {
-    var npm, npmPath, getNpmTrace = [];
+    var npm, npmPath;
 
     function getNpm() {
       var execSync;
@@ -125,20 +125,23 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
           path = pathUtil.join(path, '..');
         }
         if (fsExist((exPath = pathUtil.join(path, 'node_modules/npm')))) {
-          getNpmTrace.push('lookAround:' + path + '->' + exPath);
+          console.log('lookAround: ' + path + ' -> ' + exPath);
           return exPath;
         } else if (fsExist((exPath = pathUtil.join(path, 'lib/node_modules/npm')))) {
-          getNpmTrace.push('lookAround:' + path + '->' + exPath);
+          console.log('lookAround: ' + path + ' -> ' + exPath);
           return exPath;
         }
-        getNpmTrace.push('lookAround:' + path + '->none');
+        console.log('lookAround not found npm: ' + path);
         return null;
       }
 
       try {
         npm = require('npm');
         return true;
-      } catch (error) { getNpmTrace.push(error + ''); }
+      } catch (error) {
+        console.log(error);
+        console.warn('Continue trying to get npm...');
+      }
 
       execSync = require('child_process').execSync;
 
@@ -149,7 +152,8 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
           var usageInfo = execSync('npm help', {encoding: 'utf8'}),
             matches = /npm\@\S+ +([^\n]+)/.exec(usageInfo);
           if (!matches) {
-            getNpmTrace.push(usageInfo.split(/\n/)
+            console.log('Couldn\'t parse usage info.');
+            console.log(usageInfo.split(/\n/)
               .filter(function(line) { return !!line.trim(); }).slice(-3).join('<br>')); // last 3 lines
             return null;
           }
@@ -159,7 +163,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
           npm = require(npmPath);
           return true;
         }
-      } catch (error) { getNpmTrace.push(error + ''); }
+      } catch (error) { console.log(error); }
 
       // Retry with `npm` path
       console.warn('Try to get npm via command path.');
@@ -169,7 +173,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
             (process.platform === 'win32' ? 'where' : 'which') + ' npm', {encoding: 'utf8'});
           path = (path || '').replace(/^([^\n]+)[\s\S]*/, '$1');
           if (!path) {
-            getNpmTrace.push('which:none');
+            console.log('which:none');
             return null;
           }
           path = pathUtil.dirname(path);
@@ -182,7 +186,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
           npm = require(npmPath);
           return true;
         }
-      } catch (error) { getNpmTrace.push(error + ''); }
+      } catch (error) { console.log(error); }
 
       // Retry with `npm root -g` (It might be not environment variables)
       console.warn('Try to get npm in global directory.');
@@ -190,7 +194,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
         npm = require((npmPath = pathUtil.join(
           execSync('npm root -g', {encoding: 'utf8'}).replace(/\n+$/, ''), 'npm')));
         return true;
-      } catch (error) { getNpmTrace.push(error + ''); }
+      } catch (error) { console.log(error); }
 
       // Retry with `node` path
       console.warn('Try to get npm via node path.');
@@ -203,7 +207,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
           npm = require(npmPath);
           return true;
         }
-      } catch (error) { getNpmTrace.push(error + ''); }
+      } catch (error) { console.log(error); }
 
       return false;
     }
@@ -211,16 +215,11 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
     if (triedInit) { throw new Error('Cannot initialize module'); }
     triedInit = true;
 
-    if (!getNpm()) {
-      getNpmTrace.forEach(function(line) { console.error('[getNpmTrace] ' + line); });
-      throw new Error('Cannot get npm');
-    }
+    if (!getNpm()) { throw new Error('Cannot get npm'); }
     console.info('npm directory path: ' + (npmPath || ''));
     try {
       npmPath = require.resolve(npmPath || 'npm'); // npmPath is package dir
-    } catch (error) {
-      throw error;
-    }
+    } catch (error) { throw error; }
     console.info('npm path: ' + npmPath);
 
     console.info('Base directory path: %s', baseDir);

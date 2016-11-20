@@ -125,13 +125,13 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
           path = pathUtil.join(path, '..');
         }
         if (fsExist((exPath = pathUtil.join(path, 'node_modules/npm')))) {
-          console.log('lookAround: ' + path + ' -> ' + exPath);
+          console.log('lookAround: %s -> %s', path, exPath);
           return exPath;
         } else if (fsExist((exPath = pathUtil.join(path, 'lib/node_modules/npm')))) {
-          console.log('lookAround: ' + path + ' -> ' + exPath);
+          console.log('lookAround: %s -> %s', path, exPath);
           return exPath;
         }
-        console.log('lookAround not found npm: ' + path);
+        console.log('lookAround not found NPM: %s', path);
         return null;
       }
 
@@ -140,13 +140,13 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
         return true;
       } catch (error) {
         console.log(error);
-        console.warn('Continue trying to get npm...');
+        console.warn('Continue trying to get NPM...');
       }
 
       execSync = require('child_process').execSync;
 
       // Retry with `npm help` (v1.1.0+)
-      console.warn('Try to get npm via usage info.');
+      console.warn('Try to get NPM via usage info.');
       try {
         npmPath = (function() {
           var usageInfo = execSync('npm help', {encoding: 'utf8'}),
@@ -166,7 +166,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
       } catch (error) { console.log(error); }
 
       // Retry with `npm` path
-      console.warn('Try to get npm via command path.');
+      console.warn('Try to get NPM via command path.');
       try {
         npmPath = (function() {
           var path = execSync( // Win <Vista and <Server2008 don't have `where`.
@@ -189,7 +189,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
       } catch (error) { console.log(error); }
 
       // Retry with `npm root -g` (It might be not environment variables)
-      console.warn('Try to get npm in global directory.');
+      console.warn('Try to get NPM in global directory.');
       try {
         npm = require((npmPath = pathUtil.join(
           execSync('npm root -g', {encoding: 'utf8'}).replace(/\n+$/, ''), 'npm')));
@@ -197,7 +197,7 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
       } catch (error) { console.log(error); }
 
       // Retry with `node` path
-      console.warn('Try to get npm via node path.');
+      console.warn('Try to get NPM via node path.');
       try {
         npmPath = (function() {
           var path = execSync('node -p "process.execPath"', {encoding: 'utf8'}); // not current executable
@@ -212,15 +212,18 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
       return false;
     }
 
+    console.warn('Start initializing module...');
+    console.info('Node.js@%s', (process.version + '').replace(/^v/i, ''));
     if (triedInit) { throw new Error('Cannot initialize module'); }
     triedInit = true;
 
-    if (!getNpm()) { throw new Error('Cannot get npm'); }
-    console.info('npm directory path: ' + (npmPath || ''));
+    if (!getNpm()) { throw new Error('Cannot get NPM'); }
+    console.info('NPM@%s', (npm.version + '').replace(/^v/i, ''));
+    console.info('NPM directory path: %s', (npmPath || ''));
     try {
       npmPath = require.resolve(npmPath || 'npm'); // npmPath is package dir
     } catch (error) { throw error; }
-    console.info('npm path: ' + npmPath);
+    console.info('NPM resolved path: %s', npmPath);
 
     console.info('Base directory path: %s', baseDir);
     // npm might ignore `prefix` option.
@@ -237,14 +240,14 @@ function getHostCmd(errorHandle, cbReceiveHostCmd, cbInitDone) { // cbReceiveHos
       // Wrap `spawn.js` for dropping output from child.
       try {
         npmSpawnPath = require.resolve(pathUtil.join(pathUtil.dirname(npmPath), 'utils/spawn.js'));
-        console.warn('Try to load: ' + npmSpawnPath);
+        console.warn('Try to load: %s', npmSpawnPath);
         require(npmSpawnPath);
       } catch (error) {
         throw error.code === 'MODULE_NOT_FOUND' ?
-          new Error('Unknown version of npm') : error;
+          new Error('Unknown version of NPM') : error;
       }
       npmSpawn = require.cache[npmSpawnPath].exports;
-      if (typeof npmSpawn !== 'function') { throw new Error('Unknown version of npm or spawn.js'); }
+      if (typeof npmSpawn !== 'function') { throw new Error('Unknown version of NPM or spawn.js'); }
       require.cache[npmSpawnPath].exports = function(cmd, args, options) {
         console.warn('Spawn in silent-mode: %s %s', cmd, args.join(' '));
         options.stdio = 'ignore';
